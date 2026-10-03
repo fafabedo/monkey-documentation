@@ -19,11 +19,11 @@ CREATE TYPE monkey_vault.storage_provider_type AS ENUM (
 );
 
 -- ---------------------------------------------------------------------------
--- storage_providers
+-- storage_provider
 -- Defines available storage backends and whether they are active.
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE monkey_vault.storage_providers (
+CREATE TABLE monkey_vault.storage_provider (
   id         UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
   name       TEXT    NOT NULL UNIQUE,
   type       monkey_vault.storage_provider_type NOT NULL,
@@ -33,15 +33,15 @@ CREATE TABLE monkey_vault.storage_providers (
 );
 
 -- ---------------------------------------------------------------------------
--- storage_provider_credentials
+-- storage_provider_credential
 -- Encrypted credentials for each provider (one row per provider).
 -- All *_enc fields are AES-256-GCM encrypted, stored as base64(nonce || ciphertext).
 -- Decrypt at runtime only — never store plaintext.
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE monkey_vault.storage_provider_credentials (
+CREATE TABLE monkey_vault.storage_provider_credential (
   id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  provider_id              UUID NOT NULL REFERENCES monkey_vault.storage_providers(id) ON DELETE CASCADE,
+  provider_id              UUID NOT NULL REFERENCES monkey_vault.storage_provider(id) ON DELETE CASCADE,
 
   -- AWS S3
   aws_profile              TEXT,
@@ -66,15 +66,15 @@ CREATE TABLE monkey_vault.storage_provider_credentials (
 );
 
 -- ---------------------------------------------------------------------------
--- storage_buckets
+-- storage_bucket
 -- One row per logical bucket. The slug is used in cloud URIs: s3://slug/path
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE monkey_vault.storage_buckets (
+CREATE TABLE monkey_vault.storage_bucket (
   id                UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
   slug              TEXT    NOT NULL UNIQUE,  -- URI identifier, e.g. "monkeylibrary-csv-imports"
   display_name      TEXT    NOT NULL,
-  provider_id       UUID    NOT NULL REFERENCES monkey_vault.storage_providers(id),
+  provider_id       UUID    NOT NULL REFERENCES monkey_vault.storage_provider(id),
 
   -- Provider-specific config (only the relevant column is populated)
   s3_bucket_name    TEXT,
@@ -91,10 +91,10 @@ CREATE TABLE monkey_vault.storage_buckets (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_storage_buckets_slug ON monkey_vault.storage_buckets(slug);
+CREATE INDEX idx_storage_bucket_slug ON monkey_vault.storage_bucket(slug);
 
 -- ---------------------------------------------------------------------------
--- storage_processor_mounts
+-- storage_processor_mount
 -- Maps named URI schemes (temp, queue, trash, custom) to local paths on a
 -- specific processor. References public.processor for processor identity.
 --
@@ -105,7 +105,7 @@ CREATE INDEX idx_storage_buckets_slug ON monkey_vault.storage_buckets(slug);
 -- Processor isolation is physical: paths only exist on the registered machine.
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE monkey_vault.storage_processor_mounts (
+CREATE TABLE monkey_vault.storage_processor_mount (
   id           UUID   PRIMARY KEY DEFAULT gen_random_uuid(),
   processor_id BIGINT NOT NULL REFERENCES public.processor(id) ON DELETE CASCADE,
   mount_type   TEXT   NOT NULL,   -- "temp", "queue", "trash", or any custom name
@@ -118,10 +118,10 @@ CREATE TABLE monkey_vault.storage_processor_mounts (
   UNIQUE(processor_id, mount_type)
 );
 
-CREATE INDEX idx_processor_mounts_processor ON monkey_vault.storage_processor_mounts(processor_id);
+CREATE INDEX idx_processor_mount_processor ON monkey_vault.storage_processor_mount(processor_id);
 
 -- ---------------------------------------------------------------------------
--- storage_files
+-- storage_file
 -- Full audit trail for every upload — cloud and processor-local.
 --
 -- bucket_id    — set for cloud/fixed-path uploads (s3, dropbox, drive, fs)
@@ -133,9 +133,9 @@ CREATE INDEX idx_processor_mounts_processor ON monkey_vault.storage_processor_mo
 -- provider_ref: S3 ETag, Drive file ID, Dropbox path_display, or local absolute path
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE monkey_vault.storage_files (
+CREATE TABLE monkey_vault.storage_file (
   id              UUID   PRIMARY KEY DEFAULT gen_random_uuid(),
-  bucket_id       UUID   REFERENCES monkey_vault.storage_buckets(id),   -- nullable for processor mounts
+  bucket_id       UUID   REFERENCES monkey_vault.storage_bucket(id),    -- nullable for processor mounts
   processor_id    BIGINT REFERENCES public.processor(id),                -- nullable for cloud uploads
   relative_path   TEXT   NOT NULL,
   uri             TEXT   NOT NULL,
@@ -155,6 +155,6 @@ CREATE TABLE monkey_vault.storage_files (
   UNIQUE(bucket_id, relative_path)
 );
 
-CREATE INDEX idx_storage_files_uri       ON monkey_vault.storage_files(uri);
-CREATE INDEX idx_storage_files_bucket    ON monkey_vault.storage_files(bucket_id);
-CREATE INDEX idx_storage_files_processor ON monkey_vault.storage_files(processor_id);
+CREATE INDEX idx_storage_file_uri       ON monkey_vault.storage_file(uri);
+CREATE INDEX idx_storage_file_bucket    ON monkey_vault.storage_file(bucket_id);
+CREATE INDEX idx_storage_file_processor ON monkey_vault.storage_file(processor_id);
