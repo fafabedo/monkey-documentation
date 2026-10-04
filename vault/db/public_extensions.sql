@@ -31,7 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_processor_slug ON public.processor(slug);
 -- =============================================================================
 -- Column reference
 -- =============================================================================
--- id          — auto-increment PK, used as FK in monkey_vault.storage_processor_mounts
+-- id          — auto-increment PK, used as FK in monkey_vault.storage_processor_mount
 -- slug        — vault identifier, e.g. "mac-fabricio", "athens-server"
 -- name        — human-readable label
 -- ip_address  — informational, the machine's IP

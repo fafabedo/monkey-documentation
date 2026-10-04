@@ -2,7 +2,7 @@
 -- monkey-vault — complete schema (monkey_vault)
 -- =============================================================================
 -- Fresh install: run schema.sql → grants.sql → public_extensions.sql
--- Existing install migrating from public schema: run migrations 001–009 instead.
+-- Existing install: run migrations 001–011 instead.
 -- =============================================================================
 
 CREATE SCHEMA IF NOT EXISTS monkey_vault;
