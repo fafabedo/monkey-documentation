@@ -180,6 +180,26 @@ Each object in the `resources` array returned by `/api/video/load`:
 - `quality_score` → `score / 1e12`, 2 decimals; **do not display if result < 0.01**
 - `height` → append `p` (`1080` → `1080p`)
 
+**Quality tier label** — derived from `quality_score / 1e12` for user-facing display:
+
+| `quality_score / 1e12` | Label | Platform equivalent |
+|---|---|---|
+| < 0.5 | Low Quality | YouTube 360p / SD |
+| 0.5 – 2 | Standard | YouTube 480p / Netflix SD |
+| 2 – 5 | HD | YouTube 720p HD / Netflix HD |
+| 5 – 12 | Full HD | YouTube 1080p / Netflix Full HD / Prime HD |
+| 12+ | Ultra | Netflix 4K Ultra HD / Disney+ 4K / Prime 4K |
+
+The score combines resolution **and** bitrate, so a low-bitrate 1080p file can land in **HD** rather than **Full HD** — which is intentional. The label reflects actual encode quality, not just pixel count.
+
+Show the tier label as a badge alongside the resolution badge (`height + 'p'`). Do not show the raw number to users.
+
+```
+[1080p]  [Full HD]
+[1080p]  [HD]          ← same resolution, lower bitrate
+[4K]     [Ultra]
+```
+
 ---
 
 ## New Video Entry — Creation Flow
@@ -193,7 +213,8 @@ When a new video file is ingested by the pipeline:
 2. Create video_detail row  ← source file record
    INSERT INTO video_detail (
      video,            -- FK to video.id
-     file,             -- server path to source file
+     file,             -- server path to source file  (or vault URI)
+     processor_id,     -- FK to processor.id  ← which machine ran ffprobe
      mime, codec, width, height, duration, duration_seconds,
      size, size_mb, aspect, vertical,
      metadata,         -- full JSONB from ingestion pipeline
@@ -212,6 +233,7 @@ When a new video file is ingested by the pipeline:
      height, width, aspect, vertical, codec,
      seconds, duration, bytes, human_size
      -- NO metadata column (dropped)
+     -- NO processor_id — use video_detail_id → video_detail.processor_id
    )
 
 4. For iframe/embed resources (no physical file):
@@ -392,6 +414,64 @@ When the ingestion pipeline uploads the source file to vault, the vault returns 
 
 ---
 
+## Processor ID — Provenance Tracking
+
+### Design decision
+
+The vault URI resolves **where the file is now**. `video_detail.processor_id` records **who created this metadata** — a provenance fact about the ingestion event, not about the current file location. They are complementary and answer different questions.
+
+| Concern | Source | Question answered |
+|---|---|---|
+| File location | `monkey_vault.storage_files.processor_id` | Where is the file **now**? |
+| Ingestion provenance | `video_detail.processor_id` | Which processor **ran ffprobe and created this record**? |
+
+These stay independent. A file can be moved to a different processor after ingestion — the vault updates, but the metadata (fps, bitrate, codec, score) was produced by a specific machine running a specific ffmpeg version. That history belongs on `video_detail`.
+
+### Why not derive it from the vault URI?
+
+The vault resolver already returns `processor_id` at runtime from `storage_processor_mounts` or `storage_files`. But:
+- It requires URI parsing + a vault query on every read
+- It answers the current state, not the historical record
+- A direct FK enables `WHERE processor_id = X` queries without vault joins
+
+### processor table
+
+```sql
+CREATE TABLE IF NOT EXISTS public.processor (
+    id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    name       text        NOT NULL,    -- e.g. "mac-studio-local"
+    hostname   text,                   -- OS hostname at registration
+    status     text        NOT NULL DEFAULT 'active',  -- active | inactive | retired
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+```
+
+`video_detail.processor_id uuid REFERENCES public.processor(id) ON DELETE SET NULL`
+
+Nullable — legacy rows and iframe-only resources have no processor context.
+
+### When processor_id is set
+
+At ingestion time the pipeline knows which processor is running. `PROCESSOR_ID` env var (a UUID) is read by `VideoRegister` and written onto each `video_detail` row it creates or updates.
+
+```
+PROCESSOR_ID=<uuid of this processor>   # set per-machine in .env
+```
+
+The refactor rule "if a file is replaced, create a new `video_detail` row" means re-processing on a different machine naturally produces a new row with a new `processor_id`. No drift, no stale references.
+
+### video_resource does NOT need processor_id
+
+`video_resource` rows are deliverable URLs — CDN links, HLS streams, download links. They are not processor-specific. The chain `video_resource → video_detail_id → video_detail.processor_id` gives you the processor without redundancy.
+
+### Migration
+
+See [`db/004_add_processor_to_video_detail.sql`](./db/004_add_processor_to_video_detail.sql)
+
+---
+
+---
+
 ## Code Audit — library/API/Video
 
 ### Dead Code (safe to delete)
@@ -445,11 +525,14 @@ Run in this order — code first, DB column drops last.
 - [ ] **Update** — Remove `data.public` write from `saveVideoDetail()` (`library/API/Video/Update.js:493`)
 - [ ] **Segments** — Replace `_videoDetail?.public?.download` with `video_resource` query (`library/API/Video/Segments.js:43`)
 
-### Phase 3 — DB column drops (deploy after Phase 2 is live and stable)
+### Phase 3 — DB column drops + processor table (deploy after Phase 2 is live and stable)
 
 - [ ] **DB** — Run `db/003_fix_existing_entries.sql` — verify + repair any unlinked resources
 - [ ] **DB** — Run `db/001_drop_video_resource_metadata.sql`
 - [ ] **DB** — Run `db/002_drop_video_detail_synopsis.sql`
+- [ ] **DB** — Run `db/004_add_processor_to_video_detail.sql` — create `processor` table + add `processor_id` FK on `video_detail`
+- [ ] **Env** — Set `PROCESSOR_ID=<uuid>` in `.env` on each processing node
+- [ ] **Register `processor` rows** — Insert one row per machine into `public.processor` and note the UUID for each node's `.env`
 
 ### Phase 4 — Vault file support
 

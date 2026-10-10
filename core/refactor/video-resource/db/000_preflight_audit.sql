@@ -98,3 +98,31 @@ FROM public.video_resource;
 SELECT COUNT(*) AS rows_with_synopsis
 FROM public.video_detail
 WHERE synopsis IS NOT NULL AND synopsis <> '';
+
+
+-- -----------------------------------------------------------------------------
+-- 7. processor_id coverage — run AFTER 004_add_processor_to_video_detail.sql
+--    Shows how many video_detail rows have a processor linked vs. still NULL.
+--    NULL rows are legacy ingestions — expected, not a blocker.
+-- -----------------------------------------------------------------------------
+SELECT
+    COUNT(*)                                           AS total_rows,
+    COUNT(*) FILTER (WHERE processor_id IS NOT NULL)  AS linked_to_processor,
+    COUNT(*) FILTER (WHERE processor_id IS NULL)       AS unlinked_legacy
+FROM public.video_detail;
+
+
+-- -----------------------------------------------------------------------------
+-- 8. List processors and how many video_detail rows each owns.
+--    Useful to confirm new ingestions are being attributed correctly.
+-- -----------------------------------------------------------------------------
+SELECT
+    p.id,
+    p.name,
+    p.hostname,
+    p.status,
+    COUNT(vd.id) AS video_detail_count
+FROM public.processor p
+LEFT JOIN public.video_detail vd ON vd.processor_id = p.id
+GROUP BY p.id, p.name, p.hostname, p.status
+ORDER BY video_detail_count DESC;
