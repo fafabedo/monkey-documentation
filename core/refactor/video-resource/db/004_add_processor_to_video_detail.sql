@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration: Add processor table + processor_id FK on video_detail
+-- Migration: Add processor_id FK on video_detail
 --
 -- Reason: video_detail is an ingestion event record. Storing processor_id
 -- captures WHO ran ffprobe and produced the metadata JSONB — a provenance fact
@@ -11,33 +11,20 @@
 --   - Safe re-ingestion: new video_detail row per ingestion event, each with
 --     its own processor_id — no drift, no update conflicts
 --
+-- Prerequisites:
+--   public.processor table already exists (bigint PK, slug unique key).
+--
 -- Nullable: existing rows have no processor context; iframes never have one.
 -- Safe to run: additive only — no existing column is altered or dropped.
 -- =============================================================================
 
 
 -- -----------------------------------------------------------------------------
--- 1. Create processor table
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS public.processor (
-    id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        text        NOT NULL,
-    hostname    text,
-    status      text        NOT NULL DEFAULT 'active',
-    created_at  timestamptz NOT NULL DEFAULT now()
-);
-
-COMMENT ON TABLE  public.processor            IS 'Registered ingestion/processing nodes';
-COMMENT ON COLUMN public.processor.name       IS 'Human-readable label (e.g. "mac-studio-local")';
-COMMENT ON COLUMN public.processor.hostname   IS 'OS hostname at registration time';
-COMMENT ON COLUMN public.processor.status     IS 'active | inactive | retired';
-
-
--- -----------------------------------------------------------------------------
--- 2. Add processor_id FK to video_detail
+-- 1. Add processor_id FK to video_detail
+--    References public.processor(id) which is bigint.
 -- -----------------------------------------------------------------------------
 ALTER TABLE public.video_detail
-    ADD COLUMN IF NOT EXISTS processor_id uuid
+    ADD COLUMN IF NOT EXISTS processor_id bigint
         REFERENCES public.processor(id)
         ON DELETE SET NULL;
 
@@ -48,7 +35,7 @@ COMMENT ON COLUMN public.video_detail.processor_id IS
 
 
 -- -----------------------------------------------------------------------------
--- 3. Index for processor-scoped queries
+-- 2. Index for processor-scoped queries
 -- -----------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_video_detail_processor_id
     ON public.video_detail (processor_id)
@@ -56,7 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_video_detail_processor_id
 
 
 -- -----------------------------------------------------------------------------
--- 4. Audit: how many existing rows will remain unlinked after this migration
+-- 3. Audit: how many existing rows will remain unlinked after this migration
 -- -----------------------------------------------------------------------------
 SELECT
     COUNT(*)                                            AS total_video_detail_rows,

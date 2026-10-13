@@ -436,27 +436,49 @@ The vault resolver already returns `processor_id` at runtime from `storage_proce
 
 ### processor table
 
-```sql
-CREATE TABLE IF NOT EXISTS public.processor (
-    id         uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-    name       text        NOT NULL,    -- e.g. "mac-studio-local"
-    hostname   text,                   -- OS hostname at registration
-    status     text        NOT NULL DEFAULT 'active',  -- active | inactive | retired
-    created_at timestamptz NOT NULL DEFAULT now()
-);
+Already exists in the schema. Relevant columns:
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `bigint` | PK — FK target for `video_detail.processor_id` |
+| `name` | `text` | Human-readable label |
+| `slug` | `text` | Unique slug — use for env var identification |
+| `local_host` | `text` | LAN IP or mDNS hostname — primary SSH target |
+| `public_host` | `text` | Public IP or domain — fallback SSH target |
+| `ssh_user` | `text` | SSH username — combined with host to build `ssh user@host` |
+| `enabled` | `boolean` | Whether the processor is active |
+| `heartbeat_at` | `timestamptz` | Last heartbeat from the node |
+| `metadata` | `jsonb` | Arbitrary processor config / capabilities |
+
+`video_detail.processor_id bigint REFERENCES public.processor(id) ON DELETE SET NULL`
+
+### SSH prefix resolution
+
+`local_host` is tried first (same-network routing). `public_host` is the fallback.
+
+```js
+// preferLocal = true  →  local_host ?? public_host
+// preferLocal = false →  public_host ?? local_host
+getSshPrefix(processor, { preferLocal: true })
+// → "ssh fabricio@192.168.1.50"
+// → "ssh fabricio@fabricio.server.com"  (fallback)
 ```
 
-`video_detail.processor_id uuid REFERENCES public.processor(id) ON DELETE SET NULL`
+`REMOTE_SSH_PREFIX` in `.env` is no longer hardcoded per machine — it is derived at runtime from the processor row via `video_detail.processor_id`. The env var remains as a manual override for cases where no processor row is available.
+
+See [`db/005_update_processor_ssh_columns.sql`](./db/005_update_processor_ssh_columns.sql)
 
 Nullable — legacy rows and iframe-only resources have no processor context.
 
 ### When processor_id is set
 
-At ingestion time the pipeline knows which processor is running. `PROCESSOR_ID` env var (a UUID) is read by `VideoRegister` and written onto each `video_detail` row it creates or updates.
+At ingestion time the pipeline knows which processor is running. `PROCESSOR_ID` env var (the `bigint` id from the `processor` table) is read by `VideoRegister` and written onto each `video_detail` row it creates or updates.
 
 ```
-PROCESSOR_ID=<uuid of this processor>   # set per-machine in .env
+PROCESSOR_ID=3   # numeric id from public.processor — set per-machine in .env
 ```
+
+To find the id for a given machine: `SELECT id, name, slug FROM public.processor WHERE slug = 'your-processor-slug';`
 
 The refactor rule "if a file is replaced, create a new `video_detail` row" means re-processing on a different machine naturally produces a new row with a new `processor_id`. No drift, no stale references.
 

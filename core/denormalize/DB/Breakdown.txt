@@ -1,0 +1,33 @@
+Video
+- performer_keys = text  (|id1|id2|id3|)
+- tag_keys = text        (|id1|id2|id3|)
+- performers = jsonb     (array of {id, name, uuid, slug})
+- tags = jsonb           (array of {id, name, uuid, slug})
+- metadata = json
+    likes:          video.like_counter
+    views:          video.view_counter
+    visits:         video.view_counter  (mirrors views until a separate interaction type is added)
+    plays:          video.view_counter  (mirrors views until a separate interaction type is added)
+    video_height:   best video_resource.height   (resource_type='full', highest resolution)
+    video_duration: best video_resource.duration (resource_type='full', highest resolution)
+
+
+Performer
+- counter  = bigint  (# videos this performer appears in)
+- tag_keys = text    (|id1|id2|id3|)
+- tags = jsonb       (array of {id, name, uuid, slug})
+- metadata = jsonb
+    likes:   performer.like_counter
+    visited: SUM(video.view_counter) for all videos this performer appears in
+
+
+Studio
+- counter  = bigint  (# direct videos)
+- children = bigint  (# child studios)
+- tag_keys = text    (|id1|id2|id3|)
+- tags = jsonb       (array of {id, name, uuid, slug})
+- metadata = jsonb
+    likes:        studio.like_counter
+    visited:      SUM(video.view_counter) for all direct videos in this studio
+    nro_children: count of studios where parent = studio.id
+    children:     array of {id, uuid, slug, name} for each child studio
